@@ -1,0 +1,394 @@
+CREATE TABLE combined_mortality AS
+SELECT * FROM 0_4
+UNION ALL
+SELECT * FROM 18_20
+UNION ALL
+SELECT * FROM 21_24
+UNION ALL
+SELECT * FROM 50_59
+UNION ALL
+SELECT * FROM 60_69
+UNION ALL
+SELECT * FROM 60_69
+UNION ALL
+SELECT * FROM 70_79
+UNION ALL
+SELECT * FROM 80_
+;
+
+
+SELECT dates.Year, SUM(ICU.patient_count) AS COVID_Patient_count_per_Year
+FROM archived_covid_19_icu AS ICU
+LEFT JOIN date_table AS dates
+ON ICU.Date_id = dates.Date_id
+WHERE ICU.covid_status = "COVID+"
+GROUP BY dates.Year
+;
+
+SELECT dates.Year, SUM(MED.patient_count) AS COVID_Patient_count_per_Year_MED
+FROM archive_covid_19_med_sug AS MED
+LEFT JOIN date_table AS dates
+ON MED.Date_id = dates.Date_id
+WHERE MED.covid_status = "COVID+"
+GROUP BY dates.Year
+;
+
+SELECT dates.Month AS Month, SUM(ICU.patient_count) AS COVID_Patient_count_per_Month
+FROM archived_covid_19_icu AS ICU
+LEFT JOIN date_table AS dates
+ON ICU.Date_id = dates.Date_id
+WHERE ICU.covid_status = 'COVID+' AND dates.Year = 2021
+GROUP BY dates.Month
+ORDER BY dates.Month_Number
+;
+
+
+SELECT dates.Month, SUM(covid.pos) AS Positive_tests, SUM(covid.neg) AS Negative_tests
+FROM covid_19_overtime AS covid
+LEFT JOIN date_table AS dates
+ON covid.Date_id = dates.Date_id
+WHERE dates.Year = 2021 
+GROUP BY dates.Month
+ORDER BY dates.Month_Number
+;
+
+
+SELECT ICU.COVID_Patient_count_per_Month/tests.Positive_tests AS ICU_ratio
+FROM
+(SELECT dates.Month AS Month, SUM(ICU.patient_count) AS COVID_Patient_count_per_Month
+FROM archived_covid_19_icu AS ICU
+LEFT JOIN date_table AS dates
+ON ICU.Date_id = dates.Date_id
+WHERE ICU.covid_status = 'COVID+' AND dates.Year = 2021
+) AS ICU
+INNER JOIN
+(SELECT dates.Month AS Month, SUM(covid.pos) AS Positive_tests, SUM(covid.neg) AS Negative_tests
+FROM covid_19_overtime AS covid
+LEFT JOIN date_table AS dates
+ON covid.Date_id = dates.Date_id
+WHERE dates.Year = 2021
+) AS tests
+ON ICU.Month = tests.Month
+;
+
+SELECT 
+    characteristic_group AS age_group,
+    SUM(new_deaths) AS total_deaths
+FROM 
+    combined_mortality
+GROUP BY 
+    characteristic_group
+ORDER BY 
+    total_deaths DESC;
+
+CREATE TABLE combined_mortality AS
+SELECT * FROM 0_4
+UNION ALL
+SELECT * FROM 18_20
+UNION ALL
+SELECT * FROM 21_24
+UNION ALL
+SELECT * FROM 50_59
+UNION ALL
+SELECT * FROM 60_69
+UNION ALL
+SELECT * FROM 60_69
+UNION ALL
+SELECT * FROM 70_79
+UNION ALL
+SELECT * FROM 80_
+
+
+
+SELECT 
+    characteristic_group AS age_group,
+    SUM(cumulative_deaths) AS total_cumulative_deaths
+FROM 
+    combined_mortality
+WHERE 
+    YEAR = 2020
+GROUP BY 
+    characteristic_group
+ORDER BY 
+    total_cumulative_deaths DESC;
+
+
+
+WITH CombinedData AS (
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Month,
+        dt.Year,
+        dt.Day_of_week,
+        'MedSurg' AS Hospital_Type,
+        ms.patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths
+    FROM date_table dt
+    JOIN archive_covid_19_med_sug ms ON dt.Date_id = ms.Date_id
+    LEFT JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+
+    UNION ALL
+
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Month,
+        dt.Year,
+        dt.Day_of_week,
+        'ICU' AS Hospital_Type,
+        icu.patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths
+    FROM date_table dt
+    JOIN archived_covid_19_icu icu ON dt.Date_id = icu.Date_id
+    LEFT JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+
+    UNION ALL
+
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Month,
+        dt.Year,
+        dt.Day_of_week,
+        'AgeGroup' AS Hospital_Type,
+        cm.population_estimate AS patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths
+    FROM date_table dt
+    JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+)
+
+, MonthlyData AS (
+    SELECT
+        Year,
+        Month,
+        SUM(patient_count) AS Total_Patients,
+        SUM(new_deaths) AS Total_New_Deaths,
+        MAX(cumulative_deaths) AS Max_Cumulative_Deaths
+    FROM CombinedData
+    GROUP BY Year, Month
+)
+
+, MortalitySpikes AS (
+    SELECT
+        Year,
+        Month,
+        Total_New_Deaths,
+        LAG(Total_New_Deaths) OVER (ORDER BY Year, Month) AS Previous_Deaths,
+        Total_New_Deaths - LAG(Total_New_Deaths) OVER (ORDER BY Year, Month) AS Deaths_Spike
+    FROM MonthlyData
+)
+
+SELECT
+    ms.Year,
+    ms.Month,
+    ms.Total_New_Deaths,
+    ms.Deaths_Spike,
+    md.Total_Patients
+FROM MortalitySpikes ms
+LEFT JOIN MonthlyData md
+    ON ms.Year = md.Year AND ms.Month = md.Month
+WHERE ms.Deaths_Spike > (SELECT AVG(Deaths_Spike) + 2 * STDDEV(Deaths_Spike) FROM MortalitySpikes)
+ORDER BY ms.Year, ms.Month;
+
+
+WITH CombinedData AS (
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        dt.Day_of_week,
+        'MedSurg' AS Hospital_Type,
+        ms.patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths,
+        co.pos AS positive_tests,
+        co.neg AS negative_tests
+    FROM date_table dt
+    JOIN archive_covid_19_med_sug ms ON dt.Date_id = ms.Date_id
+    LEFT JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+    LEFT JOIN covid_19_overtime co ON dt.Date_id = co.Date_id
+
+    UNION ALL
+
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        dt.Day_of_week,
+        'ICU' AS Hospital_Type,
+        icu.patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths,
+        co.pos AS positive_tests,
+        co.neg AS negative_tests
+    FROM date_table dt
+    JOIN archived_covid_19_icu icu ON dt.Date_id = icu.Date_id
+    LEFT JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+    LEFT JOIN covid_19_overtime co ON dt.Date_id = co.Date_id
+
+    UNION ALL
+
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        dt.Day_of_week,
+        'AgeGroup' AS Hospital_Type,
+        cm.population_estimate AS patient_count,
+        cm.new_deaths,
+        cm.cumulative_deaths,
+        co.pos AS positive_tests,
+        co.neg AS negative_tests
+    FROM date_table dt
+    JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+    LEFT JOIN covid_19_overtime co ON dt.Date_id = co.Date_id
+)
+
+, YearlyData AS (
+    SELECT
+        Year,
+        SUM(patient_count) AS Total_Patients,
+        SUM(new_deaths) AS Total_New_Deaths,
+        MAX(cumulative_deaths) AS Max_Cumulative_Deaths,
+        SUM(positive_tests) AS Total_Positive_Tests,
+        SUM(negative_tests) AS Total_Negative_Tests
+    FROM CombinedData
+    GROUP BY Year
+)
+
+SELECT
+    Year,
+    Total_Patients,
+    Total_New_Deaths,
+    Total_Positive_Tests,
+    Total_Negative_Tests
+FROM YearlyData
+ORDER BY Year;
+
+
+WITH HospitalizationData AS (
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        'MedSurg' AS Hospital_Type,
+        ms.patient_count AS MedSurg_Hospitalizations,
+        0 AS ICU_Hospitalizations
+    FROM date_table dt
+    JOIN archive_covid_19_med_sug ms ON dt.Date_id = ms.Date_id
+
+    UNION ALL
+
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        'ICU' AS Hospital_Type,
+        0 AS MedSurg_Hospitalizations,
+        icu.patient_count AS ICU_Hospitalizations
+    FROM date_table dt
+    JOIN archived_covid_19_icu icu ON dt.Date_id = icu.Date_id
+),
+
+MortalityData AS (
+    SELECT
+        dt.Date_id,
+        dt.Date,
+        dt.Year,
+        cm.new_deaths,
+        cm.cumulative_deaths
+    FROM date_table dt
+    JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+),
+
+CombinedAnalysis AS (
+    SELECT
+        h.Year,
+        SUM(h.MedSurg_Hospitalizations) AS Total_MedSurg_Hospitalizations,
+        SUM(h.ICU_Hospitalizations) AS Total_ICU_Hospitalizations,
+        SUM(m.new_deaths) AS Total_New_Deaths,
+        MAX(m.cumulative_deaths) AS Max_Cumulative_Deaths
+    FROM HospitalizationData h
+    LEFT JOIN MortalityData m ON h.Date_id = m.Date_id
+    GROUP BY h.Year
+)
+
+SELECT
+    Year,
+    Total_MedSurg_Hospitalizations,
+    Total_ICU_Hospitalizations,
+    Total_New_Deaths,
+    Max_Cumulative_Deaths
+FROM CombinedAnalysis
+ORDER BY Year;
+
+
+
+WITH HospitalizationData AS (
+    SELECT
+        dt.Year,
+        SUM(ms.patient_count) AS Total_MedSurg_Hospitalizations,
+        0 AS Total_ICU_Hospitalizations
+    FROM date_table dt
+    JOIN archive_covid_19_med_sug ms ON dt.Date_id = ms.Date_id
+    GROUP BY dt.Year
+    UNION ALL
+    SELECT
+        dt.Year,
+        0 AS Total_MedSurg_Hospitalizations,
+        SUM(icu.patient_count) AS Total_ICU_Hospitalizations
+    FROM date_table dt
+    JOIN archived_covid_19_icu icu ON dt.Date_id = icu.Date_id
+    GROUP BY dt.Year
+),
+MortalityData AS (
+    SELECT
+        dt.Year,
+        SUM(cm.new_deaths) AS Total_New_Deaths,
+        MAX(cm.cumulative_deaths) AS Max_Cumulative_Deaths
+    FROM date_table dt
+    JOIN combined_mortality cm ON dt.Date_id = cm.Date_id
+    GROUP BY dt.Year
+),
+TestingData AS (
+    SELECT
+        dt.Year,
+        SUM(c19o.pos) AS Total_Positive_Tests
+    FROM date_table dt
+    JOIN covid_19_overtime c19o ON dt.Date_id = c19o.Date_id
+    GROUP BY dt.Year
+),
+CombinedData AS (
+    SELECT
+        h.Year,
+        SUM(h.Total_MedSurg_Hospitalizations) AS Total_MedSurg_Hospitalizations,
+        SUM(h.Total_ICU_Hospitalizations) AS Total_ICU_Hospitalizations,
+        m.Total_New_Deaths,
+        m.Max_Cumulative_Deaths,
+        t.Total_Positive_Tests
+    FROM HospitalizationData h
+    LEFT JOIN MortalityData m ON h.Year = m.Year
+    LEFT JOIN TestingData t ON h.Year = t.Year
+    GROUP BY h.Year, m.Total_New_Deaths, m.Max_Cumulative_Deaths, t.Total_Positive_Tests
+)
+SELECT
+    Year,
+    Total_MedSurg_Hospitalizations + Total_ICU_Hospitalizations AS Total_Hospitalizations,
+    Total_Positive_Tests,
+    Total_New_Deaths,
+    Max_Cumulative_Deaths
+FROM CombinedData
+ORDER BY Year;
+
+
+
+
+
+
+
+
+
